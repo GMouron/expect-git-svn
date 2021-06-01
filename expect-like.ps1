@@ -13,7 +13,8 @@ Param(
     [Parameter(Mandatory=$false)]
     [AllowEmptyString()]
     [string]$destination="",
-    [switch]$outputStdout
+    [switch]$outputStdout,
+    [switch]$debug
 )
 
 # Shamelessly stolen from https://stackoverflow.com/a/54933303
@@ -24,7 +25,7 @@ Function Await-Task {
     )
 
     process {
-        while (-not $task.AsyncWaitHandle.WaitOne(1000)) { }
+        while (-not $task.AsyncWaitHandle.WaitOne(1000)) { if($debug.IsPresent) { Write-Host "-> Waiting for task to complete" } }
         $task.GetAwaiter().GetResult()
     }
 }
@@ -39,6 +40,9 @@ Function Read-Output {
         $bufferSize = 80
         $buffer = [Char[]]::new($bufferSize)
         do {
+            if($debug.IsPresent) { 
+                Write-Host "Task: reading output"
+            }
             $readCount = $streamReader.ReadAsync($buffer, 0, $bufferSize) | Await-Task
             $readContent += $buffer[0..$readCount] -join ''
         } While($se.Peek() -ne -1)
@@ -59,37 +63,88 @@ $p.StartInfo.RedirectStandardInput = $true
 $p.StartInfo.RedirectStandardOutput = $true
 $p.StartInfo.RedirectStandardError = $true
 
+if($debug.IsPresent) { 
+    Write-Host "Starting command : $gitProgramPath $gitArguments"
+}
+
 [void]$p.Start()
 
 $sw = $p.StandardInput
 $sr = $p.StandardOutput
 $se = $p.StandardError
 
+if($debug.IsPresent) { 
+    Write-Host "Waiting 5 seconds"
+}
 
 Start-Sleep -Seconds 5
 
+if($debug.IsPresent) { 
+    Write-Host "Reading Standard Error"
+}
+
 $readText = $se | Read-Output
+
+if($debug.IsPresent) { 
+    Write-Host "Text from Standard Error:`n$readText"
+}
+
+if($debug.IsPresent) { 
+    Write-Host "Try finding predicate `"Couldn't chdir to `""
+}
 
 if($readText.Contains("Couldn't chdir to ")) {
     Write-Error "git svn is still running, please kill perl.exe and relaunch the command"
     exit 1
 }
+if($debug.IsPresent) { 
+    Write-Host "Try finding predicate `"(R)eject, accept (t)emporarily or accept (p)ermanently?`""
+}
 if($readText.Contains("(R)eject, accept (t)emporarily or accept (p)ermanently?")) {
+    if($debug.IsPresent) { 
+        Write-Host "Found predicate `"(R)eject, accept (t)emporarily or accept (p)ermanently?`""
+        Write-Host "Sending response : $certificateAcceptResponse" 
+    }
+    
     switch($certificateAcceptResponse) {
         "r" { Write-Host "Rejecting certificate" }
         "t" { Write-Host "Accepting certificate temporarily" }
         "p" { Write-Host "Accepting certificate permanently" }
     }
     $sw.WriteLine($certificateAcceptResponse)
+    if($debug.IsPresent) { 
+        Write-Host "Waiting 5 seconds"
+    }
+    
     Start-Sleep -Seconds 5
+    
+    if($debug.IsPresent) { 
+        Write-Host "Reading Standard Error"
+    }
     $readText = $se | Read-Output
 }
+if($debug.IsPresent) { 
+    Write-Host "Try finding predicate `"Password for `""
+}
 if($readText.Contains("Password for ")) {
+    if($debug.IsPresent) { 
+        Write-Host "Found predicate `"Password for `""
+    }
     Write-Host "Entering password"
     $sw.WriteLine($password)
 }
 
+if($debug.IsPresent) { 
+    Write-Host "Waiting for git svn command to complete ..."
+}
+
+
 $p.WaitForExit();
+
+if($debug.IsPresent) { 
+    Write-Host "Exited"
+}
+
 
 if($outputStdout.IsPresent) {
     Write-Host ($p.StandardOutput.ReadToEnd())
